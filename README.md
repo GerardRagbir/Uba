@@ -1,6 +1,6 @@
 # UBA — one taxi-booking app, built four times
 
-A note from me (your lecturer) to you (my students).
+A note to my students:
 
 Most courses show you one finished program and ask you to admire it. This repo
 does the opposite. It builds **the same taxi-booking application four times

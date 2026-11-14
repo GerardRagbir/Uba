@@ -1,0 +1,74 @@
+# UBA alerting rules (Prometheus)
+#
+# These turn the metrics the backend already exposes into CONDITIONS WORTH
+# WAKING SOMEONE FOR. A dashboard helps only when someone is looking; an alert
+# finds you.
+#
+# TO ACTIVATE: mount this file into Prometheus and reference it, e.g. in
+# infra/prometheus/prometheus.yml add:
+#     rule_files:
+#       - /etc/prometheus/alerts.yml
+# and mount it in docker-compose.yml under the prometheus service's volumes.
+# Then reload Prometheus. See them under Prometheus → Alerts.
+#
+# NOTICE how each alert reads: a PromQL expression that must stay true `for` a
+# while (so a one-second blip doesn't page anyone), a severity, and a human
+# message. `for:` is what separates a real incident from noise.
+
+groups:
+  - name: uba-availability
+    rules:
+      - alert: BackendDown
+        expr: up{job="backend"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Backend is not being scraped"
+          description: "Prometheus cannot reach the backend's /metrics for 1m. The API may be down."
+
+      - alert: HighErrorRate
+        # more than 5% of requests are 5xx over 5 minutes
+        expr: >
+          sum(rate(uba_http_requests_total{status=~"5.."}[5m]))
+          / clamp_min(sum(rate(uba_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Server error rate above 5%"
+          description: "The backend is failing more than 5% of requests. Check logs in Grafana."
+
+  - name: uba-latency
+    rules:
+      - alert: SlowResponses
+        # 95th-percentile latency worse than 1s for 10 minutes
+        expr: >
+          histogram_quantile(0.95,
+            sum(rate(uba_http_request_duration_seconds_bucket[5m])) by (le)) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p95 latency above 1s"
+          description: "Requests are slow. Suspect the database or an overloaded service."
+
+  - name: uba-security
+    rules:
+      - alert: LoginBruteForce
+        # a sustained burst of failed logins = someone guessing passwords
+        expr: sum(rate(uba_logins_total{result="failed"}[5m])) * 60 > 30
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "High rate of failed logins"
+          description: "More than 30 failed logins per minute for 2m. Possible brute-force attempt; the edge rate-limiter should be engaging."
+
+  - name: uba-business
+    rules:
+      - alert: NoBookingsBeingCreated
+        # the product has gone quiet during what should be active hours — often
+        # the first sign of a silent breakage that error rates don't catch
+        expr: sum(increase(uba_booking_events_total{event="created"}[30m])) == 0
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "No bookings created in 30 minutes"
+          description: "Either genuinely quiet, or the booking flow is broken. A business metric catching what technical ones miss."

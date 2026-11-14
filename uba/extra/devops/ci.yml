@@ -1,0 +1,80 @@
+# UBA continuous integration pipeline (GitHub Actions)
+#
+# TO ACTIVATE: copy this file to the repository root at .github/workflows/ci.yml
+# (GitHub only runs workflows found there). It is kept in the devops track so you
+# can read it beside its explanation.
+#
+# What it does on every push / PR to the 2026 branch:
+#   1. runs the backend test suite against a real throwaway PostgreSQL
+#   2. lints and builds the frontend
+#   3. builds both Docker images (proving the Dockerfiles still work)
+# If any job fails, the change is not safe to deploy — that is the whole point.
+
+name: UBA CI
+
+on:
+  push:
+    branches: [2026]
+  pull_request:
+    branches: [2026]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    # A real Postgres for the tests — closer to production than SQLite.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: uba
+          POSTGRES_PASSWORD: uba-dev-password
+          POSTGRES_DB: uba
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U uba" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        working-directory: uba/backend
+        run: pip install -r requirements-dev.txt
+      - name: Run tests
+        working-directory: uba/backend
+        env:
+          UBA_DATABASE_URL: postgresql+psycopg://uba:uba-dev-password@localhost:5432/uba
+        run: pytest -q
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: uba/frontend/package-lock.json
+      - name: Install (clean, reproducible)
+        working-directory: uba/frontend
+        run: npm ci
+      - name: Lint
+        working-directory: uba/frontend
+        run: npm run lint
+      - name: Build
+        working-directory: uba/frontend
+        run: npm run build
+
+  images-build:
+    runs-on: ubuntu-latest
+    # Only bother building images once the code is known good.
+    needs: [backend-tests, frontend-build]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t uba-backend:ci uba/backend
+      - name: Build frontend image
+        run: docker build -t uba-frontend:ci uba/frontend
+      # A real pipeline would now log in to a registry and push these with a
+      # version tag, then trigger the deploy (see the sysadmin-azure track).

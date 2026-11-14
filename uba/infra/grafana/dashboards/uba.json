@@ -548,8 +548,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "topk(8, sum(rate(uba_http_requests_total[5m])) by (route))",
-          "legendFormat": "{{route}}",
+          "expr": "topk(8, sum(rate(uba_http_requests_total[5m])) by (path))",
+          "legendFormat": "{{path}}",
           "refId": "A",
           "instant": true,
           "format": "table"
