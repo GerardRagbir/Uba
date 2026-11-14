@@ -491,8 +491,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "topk(8, sum(rate(uba_http_requests_total{status=~\"401|403\"}[5m])) by (route, status))",
-          "legendFormat": "{{route}} {{status}}",
+          "expr": "topk(8, sum(rate(uba_http_requests_total{status=~\"401|403\"}[5m])) by (path, status))",
+          "legendFormat": "{{path}} {{status}}",
           "refId": "A",
           "instant": true,
           "format": "table"

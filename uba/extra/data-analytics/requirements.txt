@@ -1,0 +1,5 @@
+pandas>=2.2
+sqlalchemy>=2.0
+psycopg[binary]>=3.2
+# optional: a chart is drawn only if matplotlib is present
+matplotlib>=3.8
