@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  /* shown for a moment before the map loads, and if it cannot load at all.
+     Yellow-cab theme: light grey paper with a faint yellow warmth. */
+  background: linear-gradient(160deg, #f1f5f9 0%, #f8fafc 50%, #fef3c7 100%);
+}
+
+/* ---------- map markers (yellow-cab theme: black + cab yellow) ---------- */
+
+.uba-pin {
+  position: relative;
+  display: block;
+}
+
+/* pickup: a black dot ringed in yellow, with a soft yellow pulse */
+.uba-pin-pickup {
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: #111827;
+  border: 3px solid #fbbf24;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 0.4);
+}
+
+.uba-pin-pickup::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  background: rgb(251 191 36 / 0.5);
+  animation: uba-pulse 2s ease-out infinite;
+}
+
+/* destination: a cab-yellow map pin with a black outline and black centre */
+.uba-pin-destination {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 8px;
+  border-radius: 50% 50% 50% 0;
+  background: #fbbf24;
+  border: 3px solid #111827;
+  box-shadow: 0 3px 10px rgb(15 23 42 / 0.45);
+  transform: rotate(-45deg);
+  transform-origin: center;
+}
+
+.uba-pin-destination::after {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border-radius: 9999px;
+  background: #111827;
+}
+
+@keyframes uba-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  to {
+    transform: scale(3.2);
+    opacity: 0;
+  }
+}
+
+/* people who ask their device for less motion get none */
+@media (prefers-reduced-motion: reduce) {
+  .uba-pin-pickup::after {
+    animation: none;
+    opacity: 0;
+  }
+}

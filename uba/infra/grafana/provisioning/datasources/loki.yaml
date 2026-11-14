@@ -1,0 +1,9 @@
+# Tells Grafana where to find Loki, so logs appear next to metrics with no
+# manual setup. The uid is referenced by the log panels in the dashboards.
+apiVersion: 1
+datasources:
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
