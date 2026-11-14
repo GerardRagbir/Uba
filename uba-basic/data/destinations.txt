@@ -1,0 +1,10 @@
+Port of Spain|60
+San Fernando|120
+Chaguanas|80
+Arima|90
+Piarco Airport|100
+Maracas Bay|150
+Tunapuna|70
+Couva|100
+Sangre Grande|140
+Point Fortin|200

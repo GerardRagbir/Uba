@@ -1,0 +1,8 @@
+# Loads every dashboard JSON file from the folder below when Grafana starts.
+apiVersion: 1
+providers:
+  - name: uba
+    type: file
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

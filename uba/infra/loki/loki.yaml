@@ -1,0 +1,45 @@
+# Loki stores logs the way Prometheus stores metrics, and Grafana reads both.
+# This is a minimal single-container setup for the demo: everything on local
+# disk, no clustering. A real deployment would use object storage (S3) and
+# more than one replica.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2020-10-24
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Lets the "Logs volume" bar at the top of Grafana's log view work, and
+  # keeps the demo from rejecting the odd out-of-order line.
+  volume_enabled: true
+  allow_structured_metadata: true
+  reject_old_samples: false
+
+query_range:
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 100

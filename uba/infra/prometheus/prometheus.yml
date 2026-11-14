@@ -1,0 +1,30 @@
+# Prometheus PULLS metrics: every 10 seconds it visits each target below and
+# reads the numbers on its /metrics page. (10s makes the dashboards feel live
+# in a demo; 15-60s is more typical in production.)
+global:
+  scrape_interval: 10s
+
+scrape_configs:
+  # The application. This is where the UBA business + HTTP metrics come from.
+  - job_name: backend
+    static_configs:
+      - targets: ["backend:8000"]
+
+  # The reverse proxy: request counts and latencies for every service it fronts.
+  - job_name: traefik
+    static_configs:
+      - targets: ["traefik:8082"]
+
+  # The observability stack watching itself - a good habit, and a teaching
+  # point: who watches the watchers?
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+
+  - job_name: alloy
+    static_configs:
+      - targets: ["alloy:12345"]

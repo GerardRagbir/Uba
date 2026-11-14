@@ -1,0 +1,55 @@
+// Alloy is the log shipper: it tails every container's logs and pushes them
+// to Loki, labelled so you can filter by service in Grafana. It is the log
+// equivalent of Prometheus scraping /metrics - the piece that moves the data.
+
+// 1. Find the running containers (via the Docker socket).
+discovery.docker "containers" {
+	host = "unix:///var/run/docker.sock"
+}
+
+// 2. Turn Docker's metadata into tidy labels: a `service` label (the compose
+//    service name) and a `container` label.
+discovery.relabel "containers" {
+	targets = discovery.docker.containers.targets
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+		target_label  = "service"
+	}
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/(.*)"
+		target_label  = "container"
+	}
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+		target_label  = "project"
+	}
+}
+
+// 3. Read the logs and forward them on.
+loki.source.docker "containers" {
+	host          = "unix:///var/run/docker.sock"
+	targets       = discovery.relabel.containers.output
+	forward_to    = [loki.process.add_labels.receiver]
+	relabel_rules = discovery.relabel.containers.rules
+}
+
+// 4. For our backend, the log line is JSON; lift `level` out to a label so
+//    Grafana can colour and filter by severity without parsing every line.
+loki.process "add_labels" {
+	stage.json {
+		expressions = {level = "level"}
+	}
+	stage.labels {
+		values = {level = ""}
+	}
+	forward_to = [loki.write.default.receiver]
+}
+
+// 5. Push to Loki.
+loki.write "default" {
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+	}
+}

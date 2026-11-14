@@ -1,0 +1,202 @@
+# The whole system, described in one file. `docker compose up --build` starts
+# every service below on a private network and wires them together.
+#
+#   browser -> Traefik -> frontend (Next.js)   for pages
+#                      -> backend  (FastAPI)   for anything under /api
+#                            -> postgres       the database
+#                            -> mailpit        catches outgoing email
+#   Prometheus scrapes metrics from backend and Traefik; Grafana draws them.
+
+name: uba
+
+services:
+  # ---------- reverse proxy: the only door into the system ----------
+  traefik:
+    image: traefik:v3.7
+    command:
+      # Discover services by reading the labels on the containers below.
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      # Dashboard, metrics for Prometheus, JSON access logs, and a health ping.
+      - --api.dashboard=true
+      - --metrics.prometheus=true
+      - --metrics.prometheus.entrypoint=metrics
+      - --entrypoints.metrics.address=:8082
+      - --accesslog=true
+      - --accesslog.format=json
+      - --ping=true
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      # Read-only access to Docker, so Traefik can see which containers exist.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.dashboard.rule=Host(`traefik.localhost`)
+      - traefik.http.routers.dashboard.service=api@internal
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ---------- the application ----------
+  frontend:
+    build: ./frontend
+    labels:
+      - traefik.enable=true
+      # Everything that is not /api goes to the frontend.
+      - traefik.http.routers.frontend.rule=Host(`localhost`)
+      - traefik.http.services.frontend.loadbalancer.server.port=3000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      UBA_ENVIRONMENT: ${UBA_ENVIRONMENT:-development}
+      UBA_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-uba}:${POSTGRES_PASSWORD:-uba-dev-password}@postgres:5432/${POSTGRES_DB:-uba}
+      UBA_JWT_SECRET: ${UBA_JWT_SECRET:-change-me-in-production-with-a-long-random-value}
+      UBA_SMTP_HOST: mailpit
+      UBA_SMTP_PORT: "1025"
+      UBA_PUBLIC_URL: ${UBA_PUBLIC_URL:-http://localhost}
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.backend.loadbalancer.server.port=8000
+      # /api goes to the backend. A longer rule wins over the frontend's.
+      - traefik.http.routers.backend.rule=Host(`localhost`) && PathPrefix(`/api`)
+      # Login, register and password reset get a strict rate limit, which
+      # slows down anyone trying to guess passwords.
+      - traefik.http.routers.backend-auth.rule=Host(`localhost`) && PathPrefix(`/api/auth`)
+      - traefik.http.routers.backend-auth.middlewares=auth-ratelimit
+      - traefik.http.middlewares.auth-ratelimit.ratelimit.average=30
+      - traefik.http.middlewares.auth-ratelimit.ratelimit.period=1m
+      - traefik.http.middlewares.auth-ratelimit.ratelimit.burst=15
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-uba}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-uba-dev-password}
+      POSTGRES_DB: ${POSTGRES_DB:-uba}
+    volumes:
+      # A named volume: the data survives `docker compose down`.
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # ---------- email: catches every message and shows it in a web page ----------
+  mailpit:
+    image: axllent/mailpit:v1.33
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.mailpit.rule=Host(`mail.localhost`)
+      - traefik.http.services.mailpit.loadbalancer.server.port=8025
+    restart: unless-stopped
+
+  # ---------- observability ----------
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.prometheus.rule=Host(`prometheus.localhost`)
+      - traefik.http.services.prometheus.loadbalancer.server.port=9090
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.3
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_SERVER_ROOT_URL: http://grafana.localhost
+      # Demo convenience: view dashboards without logging in.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/uba.json
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.grafana.rule=Host(`grafana.localhost`)
+      - traefik.http.services.grafana.loadbalancer.server.port=3000
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+
+  # ---------- logs: Loki stores them, Alloy ships them ----------
+  # Prometheus handles numbers; Loki handles log lines. Together they let
+  # Grafana show a metric spike and the exact log lines behind it, side by side.
+  loki:
+    image: grafana/loki:3.7.10
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./infra/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    restart: unless-stopped
+
+  # Alloy tails every container's logs and pushes them to Loki, labelled by
+  # service. It needs read-only access to the Docker socket to see the logs.
+  alloy:
+    image: grafana/alloy:v1.22.0
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+      # Expose Alloy's own metrics/UI to the compose network so Prometheus can
+      # scrape it (otherwise it binds to localhost inside the container only).
+      - --server.http.listen-addr=0.0.0.0:12345
+    volumes:
+      - ./infra/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  # ---------- security lab: an INTENTIONALLY VULNERABLE practice target ----------
+  # This service is broken on purpose, for students learning to find and fix
+  # web vulnerabilities (see securitylab/README.md). Three deliberate choices
+  # keep it from endangering anything real:
+  #   - it is NOT behind Traefik and has NO traefik labels, so it is never part
+  #     of the main site;
+  #   - it is published on 127.0.0.1 only, so it is reachable from this machine
+  #     and never from the network or internet;
+  #   - it sits on its own `lab` network with no link to postgres or the
+  #     backend, so even if a student fully compromises it, there is nothing
+  #     valuable to reach. Its data is a throwaway SQLite file of fake records.
+  securitylab:
+    build: ./securitylab
+    ports:
+      - "127.0.0.1:8100:8100"
+    networks:
+      - lab
+    restart: unless-stopped
+
+networks:
+  # A separate network, deliberately not connected to the default one above.
+  lab:
+
+volumes:
+  postgres-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  alloy-data:
